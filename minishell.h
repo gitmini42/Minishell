@@ -14,6 +14,7 @@
 # include "libft/libft.h"
 
 
+
 typedef struct {
     char **commands;      // Array of commands
     char ***arguments;    // Array of argument arrays
@@ -36,7 +37,8 @@ void	execute_commands(CommandData *data, char *const envp[]);
 char	*find_command_path(char *command, char *const envp[]);
 int     execute_builtin(char **args);
 int	    is_builtin(char *command, char **args);
-void    ft_echo(char **args);
+int     ft_echo(char **args);
+int     ft_pwd(void);
 
 
 #endif

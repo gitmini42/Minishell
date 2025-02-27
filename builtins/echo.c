@@ -10,7 +10,7 @@ static	int nb_args(char **args)
 	return (size);
 }
 
-void    ft_echo(char **args)
+int    ft_echo(char **args)
 {
 	int		i;
 	int		n_option;
@@ -34,4 +34,5 @@ void    ft_echo(char **args)
 	}
 	if (n_option == 0)
 		write(1, "\n", 1);
+	return (1);
 }

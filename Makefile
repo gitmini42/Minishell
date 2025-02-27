@@ -7,6 +7,7 @@ LIBS = -Llibft -lft -lreadline
 
 SRCS =  ./builtins/is_builtins.c \
 		./builtins/echo.c \
+		./builtins/pwd.c \
 		main.c parser_pipex.c pipes_exec.c token_handling.c find_command_path.c
 
 OBJS = $(SRCS:.c=.o)
