@@ -1,180 +1,189 @@
 #include "minishell.h"
 
-
-typedef struct s_parse
+void	execute_command(char *command, char **args, char *const envp[])
 {
-	char		**args;
-	int			args_count;
-	bool		in_quotes;
-	char		quote_char;
-	size_t		i;
-	size_t		start;
-	int			brace_count;
-	const char	*cmd;
-}	t_parse;
+	char	*full_path;
 
-// excluí ft_strlen, ft_putchar_fd, ft_putstr_fd e *ft_substr
-// pois já estão no libft
-
-char	*clean_backslashes(const char *arg)
-{
-	size_t	i;
-	size_t	j;
-	size_t	len;
-	char	*cleaned;
-
-	i = 0;
-	j = 0;
-	len = ft_strlen(arg);
-	cleaned = malloc(len + 1);
-	if (!cleaned)
+	full_path = find_command_path(command, envp);
+	if (!full_path)
 	{
-		ft_putstr_fd("Error: malloc failed\n", STDERR_FILENO);
+		ft_putstr_fd("Command not found: ", 2);
+		ft_putstr_fd(command, 2);
+		ft_putstr_fd("\n", 2);
 		exit(1);
 	}
-	while (arg[i])
+	execve(full_path, args, envp);
+	perror("execve");
+	free(full_path);
+	exit(1);
+}
+
+void	setup_pipes_and_redirections(int i, int num_commands,
+			int *pipefd, int *prev_pipe_read, CommandData *data)
+{
+	int	fd_in;
+	int	fd_out;
+	int	flags;
+
+	if (i == 0 && data->input_file)
 	{
-		if (arg[i] == '\\' && arg[i + 1] != '\0')
-			i++;
-		cleaned[j] = arg[i];
-		j++;
+		fd_in = open(data->input_file, O_RDONLY);
+		if (fd_in < 0)
+		{
+			perror("open input file");
+			exit(1);
+		}
+		dup2(fd_in, STDIN_FILENO);
+		close(fd_in);
+	}
+	if (i == num_commands - 1 && data->output_file)
+	{
+		flags = O_WRONLY | O_CREAT;
+		if (data->append_output)
+			flags |= O_APPEND;
+		else
+			flags |= O_TRUNC;
+		fd_out = open(data->output_file, flags, 0644);
+		if (fd_out < 0)
+		{
+			perror("open output file");
+			exit(1);
+		}
+		dup2(fd_out, STDOUT_FILENO);
+		close(fd_out);
+	}
+	if (i > 0)
+	{
+		dup2(*prev_pipe_read, STDIN_FILENO);
+		close(*prev_pipe_read);
+	}
+	if (i < num_commands - 1)
+	{
+		dup2(pipefd[1], STDOUT_FILENO);
+		close(pipefd[0]);
+		close(pipefd[1]);
+	}
+}
+
+void	execute_commands(CommandData *data, char *const envp[])
+{
+	int pipefd[2];
+	int prev_pipe_read = -1;
+	int i;
+	pid_t pid;
+	pid_t *pids;
+	int status;
+	struct sigaction sa;
+
+	pids = malloc(sizeof(pid_t) * data->num_commands);
+	if (!pids)
+	{
+		perror("malloc");
+		exit(1);
+	}
+	i = 0;
+	if (ft_strcmp(data->commands[i], "cd") == 0)
+	{
+		ft_cd(data->arguments[i], &i);
+	}
+	while (i < data->num_commands)
+	{
+		if (i < data->num_commands - 1)
+		{
+			if (pipe(pipefd) == -1)
+			{
+				perror("pipe");
+				exit(1);
+			}
+		}
+		// Se o comando for 'cd', executamos no processo atual
+
+		pid = fork();
+		if (pid == 0)
+		{
+			memset(&sa, 0, sizeof(sa));
+			sa.sa_handler = SIG_DFL;
+			sigemptyset(&sa.sa_mask);
+			sa.sa_flags = 0;
+			if (sigaction(SIGQUIT, &sa, NULL) == -1)
+			{
+				perror("sigaction");
+				exit(1);
+			}
+			setup_pipes_and_redirections(i, data->num_commands, pipefd, &prev_pipe_read, data);
+			if (is_builtin(data->commands[i], data->arguments[i]))
+				;
+			else
+				execute_command(data->commands[i], data->arguments[i], envp);
+			exit(1);
+		}
+		else if (pid > 0)
+		{
+			pids[i] = pid;
+			if (i > 0)
+				close(prev_pipe_read);
+			if (i < data->num_commands - 1)
+			{
+				prev_pipe_read = pipefd[0];
+				close(pipefd[1]);
+			}
+		}
+		else
+		{
+			perror("fork");
+			exit(1);
+		}
 		i++;
 	}
-	cleaned[j] = '\0';
-	return (cleaned);
-}
-
-void	add_argument(t_parse *state)
-{
-	char	*arg;
-	char	*cleaned_arg;
-	char	**new_args;
-	int		i;
-
-	arg = ft_substr(state->cmd, state->start, state->i - state->start);
-	if (!arg)
+	i = 0;
+	while (i < data->num_commands)
 	{
-		ft_putstr_fd("Error: malloc failed\n", STDERR_FILENO);
+		waitpid(pids[i], &status, 0);
+		i++;
+	}
+	free(pids);
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = SIG_IGN;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGQUIT, &sa, NULL) == -1)
+	{
+		perror("sigaction");
 		exit(1);
 	}
-	cleaned_arg = clean_backslashes(arg);
-	free(arg);
-	new_args = malloc(sizeof(char *) * (state->args_count + 2));
-	if (!new_args)
-	{
-		ft_putstr_fd("Error: malloc failed\n", STDERR_FILENO);
-		exit(1);
-	}
-	i = -1;
-	while (++i < state->args_count)
-		new_args[i] = state->args[i];
-	new_args[state->args_count] = cleaned_arg;
-	new_args[state->args_count + 1] = NULL;
-	free(state->args);
-	state->args = new_args;
-	state->args_count++;
-}
-
-void	handle_non_quoted_space(t_parse *state)
-{
-	if (state->i > state->start)
-		add_argument(state);
-	while (state->cmd[state->i] == ' ')
-		state->i++;
-	state->start = state->i;
-}
-
-char	**finalize_args(t_parse *state)
-{
-	state->args[state->args_count] = NULL;
-	return (state->args);
-}
-
-void	handle_end_of_quoted_string(t_parse *state)
-{
-	state->in_quotes = false;
-	add_argument(state);
-	state->i++;
-	state->start = state->i;
-	state->quote_char = '\0';
-}
-
-static void	initialize_state(t_parse *state, const char *cmd)
-{
-	state->args = malloc(sizeof(char *) * 2);
-	if (!state->args)
-	{
-		ft_putstr_fd("Error: malloc failed\n", STDERR_FILENO);
-		exit(1);
-	}
-	state->args_count = 0;
-	state->in_quotes = false;
-	state->quote_char = '\0';
-	state->i = 0;
-	state->start = 0;
-	state->brace_count = 0;
-	state->cmd = cmd;
-}
-
-static void	handle_quoted_string(t_parse *state)
-{
-	state->in_quotes = true;
-	state->quote_char = state->cmd[state->i];
-	state->i++;
-	state->start = state->i;
-}
-
-static void	handle_braces_and_escapes(t_parse *state)
-{
-	if (state->cmd[state->i] == '{')
-		state->brace_count++;
-	else if (state->cmd[state->i] == '}')
-		state->brace_count--;
-	if (state->cmd[state->i] == '\\' && state->cmd[state->i + 1] != '\0')
-	{
-		state->i++;
-		state->start = state->i;
-	}
-
-	state->i++;
 }
 
 
-char	**parse_command(const char *cmd)
-{
-	t_parse	state;
 
-	initialize_state(&state, cmd);
-	while (state.cmd[state.i])
-	{
-		if ((state.cmd[state.i] == '\''
-				|| state.cmd[state.i] == '"') && !state.in_quotes)
-			handle_quoted_string(&state);
-		else if (state.cmd[state.i] == state.quote_char
-			&& state.in_quotes && state.brace_count == 0)
-			handle_end_of_quoted_string(&state);
-		else if (state.in_quotes)
-			handle_braces_and_escapes(&state);
-		else if (state.cmd[state.i] == ' ' && !state.in_quotes)
-			handle_non_quoted_space(&state);
-		else
-			state.i++;
-	}
-	if (state.i > state.start)
-		add_argument(&state);
-	return (finalize_args(&state));
-}
 
-/* int main(void)
-{
-    //char **args = parse_command("echo 'Hello, World!' \"This is a test\" arg3 \\{escaped\\}");
-	char **args = parse_command("echo \"Hello, World!\" | grep \"World\" | wc -l");
+/* int main() {
+    // Example input: "ls -l | grep .c > output.txt"
+    char *tokens[] = {"ls", "-l", "|", "grep", ".c", ">", "output.txt"};
+    int count = sizeof(tokens) / sizeof(tokens[0]);
 
-    for (int i = 0; args[i] != NULL; i++)
-    {
-        printf("Argument %d: %s\n", i, args[i]);
-        free(args[i]);
+    CommandData data;
+    parse_input(tokens, count, &data);
+
+    // Print parsed data
+    printf("Number of commands: %d\n", data.num_commands);
+    printf("Number of pipes: %d\n", data.num_pipes);
+    printf("Input file: %s\n", data.input_file ? data.input_file : "None");
+    printf("Output file: %s\n", data.output_file ? data.output_file : "None");
+    printf("Append output: %d\n", data.append_output);
+
+    for (int i = 0; i < data.num_commands; i++) {
+        printf("Command %d: %s\n", i, data.commands[i]);
+        for (int j = 0; data.arguments[i][j] != NULL; j++) {
+            printf("  Argument %d: %s\n", j, data.arguments[i][j]);
+        }
     }
-    free(args);
+
+    // Execute the commands
+    char *envp[] = {NULL}; // Empty environment (can be customized)
+    execute_commands(&data, envp);
+
+    // Free allocated memory
+    free_command_data(&data);
+
     return 0;
 } */
