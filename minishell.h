@@ -13,6 +13,8 @@
 #include <readline/history.h>
 # include "libft/libft.h"
 
+#define PATH_MAX        4096
+
 
 
 typedef struct {
@@ -35,10 +37,11 @@ void	parse_input(char **tokens, int count, CommandData *data);
 void	free_command_data(CommandData *data);
 void	execute_commands(CommandData *data, char *const envp[]);
 char	*find_command_path(char *command, char *const envp[]);
-int     execute_builtin(char **args);
-int	    is_builtin(char *command, char **args);
-int     ft_echo(char **args);
-int     ft_pwd(void);
+int		execute_builtin(char **args);
+int		is_builtin(char *command, char **args);
+int		ft_echo(char **args);
+int		ft_pwd(void);
+int		ft_cd(char **args, int *i);
 
 
 #endif
